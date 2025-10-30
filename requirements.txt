@@ -1,8 +1,0 @@
-# requirements.txt
-
-tensorflow
-pandas
-numpy
-scikit-learn
-opencv-python
-matplotlib
