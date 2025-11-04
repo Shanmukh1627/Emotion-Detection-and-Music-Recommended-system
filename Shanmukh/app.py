@@ -1,10 +1,8 @@
-# Run from your folder so relative paths work
 from pathlib import Path
 import os
 BASE_DIR = Path(__file__).resolve().parent
 os.chdir(BASE_DIR)
 
-# --- Streamlit must be configured before any other st.* call ---
 import streamlit as st
 st.set_page_config(page_title="AI MoodMate 🎵", page_icon="🎵", layout="centered")
 
@@ -15,7 +13,6 @@ from tensorflow.keras.preprocessing.image import img_to_array
 import ast
 import gdown
 
-# Try keras (Keras 3) first; fall back to tf.keras if needed
 try:
     import keras
     _USE_KERAS = True
@@ -23,31 +20,26 @@ except Exception:
     import tensorflow as tf
     _USE_KERAS = False
 
-# ---------- Config ----------
 MODEL_PATH = BASE_DIR / "emotion_model.keras"
 MUSIC_DB_PATH = BASE_DIR / "processed_music.csv"
 EMOTION_LABELS = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
-GDRIVE_URL = "https://drive.google.com/uc?id=17V1RvB_Wt7MbE7NHWXKzbJiXugIPNjDx"  # public link
+GDRIVE_URL = "https://drive.google.com/uc?id=17V1RvB_Wt7MbE7NHWXKzbJiXugIPNjDx"
 
-# Download model once if not present (use print here, not st.write, before UI is ready)
 if not MODEL_PATH.exists():
-    print("🔽 Downloading model from Google Drive…")
+    print("Downloading model from Google Drive…")
     gdown.download(GDRIVE_URL, str(MODEL_PATH), quiet=False)
 
-# ---------- Title & description ----------
 st.title("🎧 AI MoodMate – Emotion Detection + Music Recommendations")
-st.write("Upload a face image **or** use your **webcam**. I’ll detect the mood and suggest matching songs.")
+st.write("Upload a face image or use your webcam. I’ll detect the mood and suggest matching songs.")
 
-# ---------- Load resources ----------
 @st.cache_resource
 def load_emotion_model():
     try:
         if _USE_KERAS:
-            model = keras.models.load_model(str(MODEL_PATH))
+            return keras.models.load_model(str(MODEL_PATH))
         else:
-            import tensorflow as tf  # lazy import
-            model = tf.keras.models.load_model(str(MODEL_PATH))
-        return model
+            import tensorflow as tf
+            return tf.keras.models.load_model(str(MODEL_PATH))
     except Exception as e:
         st.error(f"Failed to load model: {e}")
         st.stop()
@@ -55,14 +47,13 @@ def load_emotion_model():
 @st.cache_data
 def load_music_database(csv_path: Path):
     if not csv_path.exists():
-        st.error(f"CSV not found: {csv_path.name} in {csv_path.parent.name}/")
+        st.error(f"CSV not found: {csv_path.name}")
         st.stop()
     return pd.read_csv(csv_path)
 
 emotion_model = load_emotion_model()
 music_df = load_music_database(MUSIC_DB_PATH)
 
-# ---------- Input choice ----------
 input_option = st.radio("Choose your input method:", ("Upload a file", "Use Webcam"))
 image_to_process = None
 
@@ -75,9 +66,11 @@ else:
     if webcam_image is not None:
         image_to_process = Image.open(webcam_image)
 
-# ---------- Predict + recommend ----------
 if image_to_process is not None:
-    st.image(image_to_process, caption="Your Image", use_container_width=True)
+    try:
+        st.image(image_to_process, caption="Your Image", use_container_width=True)
+    except TypeError:
+        st.image(image_to_process, caption="Your Image", use_column_width=True)
 
     img_resized = image_to_process.resize((96, 96))
     if img_resized.mode != "RGB":
@@ -86,14 +79,14 @@ if image_to_process is not None:
     img_array = img_to_array(img_resized).astype("float32")
     img_array = np.expand_dims(img_array, axis=0) / 255.0
 
-    with st.spinner("🧠 Detecting your mood…"):
+    with st.spinner("Detecting your mood…"):
         preds = emotion_model.predict(img_array)
         predicted_class_index = int(np.argmax(preds[0]))
         predicted_emotion = EMOTION_LABELS[predicted_class_index]
 
     st.success(f"I think you're feeling: **{predicted_emotion.capitalize()}**")
 
-    st.subheader(f"🎵 Songs for a **{predicted_emotion.capitalize()}** mood")
+    st.subheader(f"Songs for a {predicted_emotion.capitalize()} mood")
     recs = music_df[music_df["emotion"] == predicted_emotion]
 
     if not recs.empty:
@@ -106,6 +99,6 @@ if image_to_process is not None:
                 artists = str(row.get("artists", "Unknown"))
             st.write(f"- **{row.get('name', 'Untitled')}** by {artists}")
     else:
-        st.info(f"Sorry, no songs found for **{predicted_emotion}**.")
+        st.info(f"Sorry, no songs found for {predicted_emotion}.")
 else:
-    st.info("⬆️ Upload an image or switch to **Use Webcam** to get started.")
+    st.info("Upload an image or switch to Use Webcam to get started.")
