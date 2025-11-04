@@ -1,20 +1,50 @@
+
+import sys, subprocess
+def _pip(pkgs):
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", *pkgs])
+    except Exception as e:
+        print("⚠️ pip install failed:", e)
+
+_pip([
+    "streamlit==1.39.0",
+    "tensorflow-cpu==2.15.0.post1",
+    "pandas==2.2.2",
+    "numpy==1.26.4",
+    "pillow==10.3.0",
+    "gdown==5.2.0",
+])
+
+
+from pathlib import Path
+import os, gdown
+BASE_DIR = Path(__file__).resolve().parent
+os.chdir(BASE_DIR)
+
+
+MODEL_PATH = BASE_DIR / "emotion_model.keras"
+if not MODEL_PATH.exists():
+    gdown.download(
+        "https://drive.google.com/uc?id=17V1RvB_Wt7MbE7NHWXKzbJiXugIPNjDx",
+        str(MODEL_PATH),
+        quiet=False,
+    )
+
+
 import streamlit as st
 import tensorflow as tf
 import pandas as pd
 import numpy as np
-from tensorflow.keras.preprocessing.image import load_img, img_to_array
+from tensorflow.keras.preprocessing.image import img_to_array
 from PIL import Image
 import ast
-import os
 
-# --- Configuration: Point to LOCAL files ---
-MODEL_PATH = 'emotion_model.keras'
-MUSIC_DB_PATH = 'processed_music.csv'
+MUSIC_DB_PATH = BASE_DIR / "processed_music.csv"
 EMOTION_LABELS = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
 
 @st.cache_resource
 def load_emotion_model():
-    model = tf.keras.models.load_model(MODEL_PATH)
+    model = tf.keras.models.load_model(str(MODEL_PATH))
     return model
 
 @st.cache_data
@@ -25,6 +55,7 @@ def load_music_database():
 emotion_model = load_emotion_model()
 music_df = load_music_database()
 
+st.set_page_config(page_title="AI MoodMate 🎵", page_icon="🎵", layout="centered")
 st.title("AI MoodMate 🎵")
 st.write("Upload an image of a face and I'll recommend some music to match your mood.")
 
@@ -41,7 +72,7 @@ else:
         image_to_process = Image.open(webcam_image)
 
 if image_to_process is not None:
-    st.image(image_to_process, caption='Your Image', use_column_width=True)
+    st.image(image_to_process, caption='Your Image', use_container_width=True)
 
     img_resized = image_to_process.resize((96, 96))
     if img_resized.mode != 'RGB':
@@ -59,15 +90,14 @@ if image_to_process is not None:
     st.success(f"I think you're feeling: **{predicted_emotion.capitalize()}**")
 
     st.subheader(f"Here are some '{predicted_emotion.capitalize()}' songs for you:")
-
     recommended_songs = music_df[music_df['emotion'] == predicted_emotion]
 
     if not recommended_songs.empty:
-        for index, row in recommended_songs.sample(min(5, len(recommended_songs))).iterrows():
+        for _, row in recommended_songs.sample(min(5, len(recommended_songs))).iterrows():
             try:
                 artist_list = ast.literal_eval(row['artists'])
                 st.write(f"- **{row['name']}** by {', '.join(artist_list)}")
-            except:
+            except Exception:
                 st.write(f"- **{row['name']}** by {row['artists']}")
     else:
         st.write(f"Sorry, I couldn't find any songs for '{predicted_emotion}'.")
