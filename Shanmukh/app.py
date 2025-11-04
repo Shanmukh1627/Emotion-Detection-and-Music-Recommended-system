@@ -4,7 +4,10 @@ import os
 BASE_DIR = Path(__file__).resolve().parent
 os.chdir(BASE_DIR)
 
+# --- Streamlit must be configured before any other st.* call ---
 import streamlit as st
+st.set_page_config(page_title="AI MoodMate 🎵", page_icon="🎵", layout="centered")
+
 import pandas as pd
 import numpy as np
 from PIL import Image
@@ -24,15 +27,14 @@ except Exception:
 MODEL_PATH = BASE_DIR / "emotion_model.keras"
 MUSIC_DB_PATH = BASE_DIR / "processed_music.csv"
 EMOTION_LABELS = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
-GDRIVE_URL = "https://drive.google.com/uc?id=17V1RvB_Wt7MbE7NHWXKzbJiXugIPNjDx"  # your model link
+GDRIVE_URL = "https://drive.google.com/uc?id=17V1RvB_Wt7MbE7NHWXKzbJiXugIPNjDx"  # public link
 
-# Download model once if not present
+# Download model once if not present (use print here, not st.write, before UI is ready)
 if not MODEL_PATH.exists():
-    st.write("🔽 Downloading model from Google Drive…")
+    print("🔽 Downloading model from Google Drive…")
     gdown.download(GDRIVE_URL, str(MODEL_PATH), quiet=False)
 
-# ---------- Streamlit UI ----------
-st.set_page_config(page_title="AI MoodMate 🎵", page_icon="🎵", layout="centered")
+# ---------- Title & description ----------
 st.title("🎧 AI MoodMate – Emotion Detection + Music Recommendations")
 st.write("Upload a face image **or** use your **webcam**. I’ll detect the mood and suggest matching songs.")
 
