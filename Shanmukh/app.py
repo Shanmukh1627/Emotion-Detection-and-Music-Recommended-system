@@ -1,98 +1,66 @@
-
-import sys, subprocess
-
-def _pip(pkgs):
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", *pkgs])
-    except Exception as e:
-        print("⚠️ pip install failed:", e)
-
-
-_pip([
-    "tensorflow-cpu==2.15.0.post1",
-    "pandas==2.2.2",
-    "numpy==1.26.4",
-    "pillow==10.3.0",
-])
-
-
-try:
-    import gdown  
-except ModuleNotFoundError:
-    _pip(["gdown==5.2.0"])
-    import gdown  
-
-
+# Run from your folder so relative paths work
 from pathlib import Path
 import os
 BASE_DIR = Path(__file__).resolve().parent
 os.chdir(BASE_DIR)
 
-
 import streamlit as st
-import tensorflow as tf
 import pandas as pd
 import numpy as np
-from tensorflow.keras.preprocessing.image import img_to_array
 from PIL import Image
+from tensorflow.keras.preprocessing.image import img_to_array
 import ast
+import gdown
 
+# Try keras (Keras 3) first; fall back to tf.keras if needed
+try:
+    import keras
+    _USE_KERAS = True
+except Exception:
+    import tensorflow as tf
+    _USE_KERAS = False
 
-
+# ---------- Config ----------
 MODEL_PATH = BASE_DIR / "emotion_model.keras"
 MUSIC_DB_PATH = BASE_DIR / "processed_music.csv"
 EMOTION_LABELS = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
+GDRIVE_URL = "https://drive.google.com/uc?id=17V1RvB_Wt7MbE7NHWXKzbJiXugIPNjDx"  # your model link
 
-
-GDRIVE_URL = "https://drive.google.com/uc?id=17V1RvB_Wt7MbE7NHWXKzbJiXugIPNjDx"
-
-
+# Download model once if not present
 if not MODEL_PATH.exists():
-    try:
-        with open(BASE_DIR / ".download_lock", "w") as _:
-            pass  
-        st.write("🔽 Downloading model from Google Drive…")
-        gdown.download(GDRIVE_URL, str(MODEL_PATH), quiet=False)
-    except Exception as e:
-        st.error("Couldn't download the model from Google Drive. "
-                 "Ensure the file is shared as 'Anyone with the link → Viewer'.")
-        st.stop()
-    finally:
-        try:
-            os.remove(BASE_DIR / ".download_lock")
-        except Exception:
-            pass
+    st.write("🔽 Downloading model from Google Drive…")
+    gdown.download(GDRIVE_URL, str(MODEL_PATH), quiet=False)
 
-
+# ---------- Streamlit UI ----------
 st.set_page_config(page_title="AI MoodMate 🎵", page_icon="🎵", layout="centered")
 st.title("🎧 AI MoodMate – Emotion Detection + Music Recommendations")
 st.write("Upload a face image **or** use your **webcam**. I’ll detect the mood and suggest matching songs.")
 
-
+# ---------- Load resources ----------
 @st.cache_resource
 def load_emotion_model():
     try:
-        model = tf.keras.models.load_model(str(MODEL_PATH))
+        if _USE_KERAS:
+            model = keras.models.load_model(str(MODEL_PATH))
+        else:
+            import tensorflow as tf  # lazy import
+            model = tf.keras.models.load_model(str(MODEL_PATH))
         return model
     except Exception as e:
-        st.error(f"Failed to load model from {MODEL_PATH.name}: {e}")
+        st.error(f"Failed to load model: {e}")
         st.stop()
 
 @st.cache_data
 def load_music_database(csv_path: Path):
     if not csv_path.exists():
-        st.error(f"CSV not found: {csv_path.name}. Make sure it is inside your folder.")
+        st.error(f"CSV not found: {csv_path.name} in {csv_path.parent.name}/")
         st.stop()
-    try:
-        return pd.read_csv(csv_path)
-    except Exception as e:
-        st.error(f"Failed to read {csv_path.name}: {e}")
-        st.stop()
+    return pd.read_csv(csv_path)
 
 emotion_model = load_emotion_model()
 music_df = load_music_database(MUSIC_DB_PATH)
 
-# ---------- Input selection (Upload or Webcam) ----------
+# ---------- Input choice ----------
 input_option = st.radio("Choose your input method:", ("Upload a file", "Use Webcam"))
 image_to_process = None
 
@@ -105,17 +73,16 @@ else:
     if webcam_image is not None:
         image_to_process = Image.open(webcam_image)
 
-
+# ---------- Predict + recommend ----------
 if image_to_process is not None:
     st.image(image_to_process, caption="Your Image", use_container_width=True)
 
-    
     img_resized = image_to_process.resize((96, 96))
     if img_resized.mode != "RGB":
         img_resized = img_resized.convert("RGB")
 
-    img_array = img_to_array(img_resized)
-    img_array = np.expand_dims(img_array, axis=0).astype("float32") / 255.0
+    img_array = img_to_array(img_resized).astype("float32")
+    img_array = np.expand_dims(img_array, axis=0) / 255.0
 
     with st.spinner("🧠 Detecting your mood…"):
         preds = emotion_model.predict(img_array)
@@ -124,25 +91,18 @@ if image_to_process is not None:
 
     st.success(f"I think you're feeling: **{predicted_emotion.capitalize()}**")
 
-   
     st.subheader(f"🎵 Songs for a **{predicted_emotion.capitalize()}** mood")
     recs = music_df[music_df["emotion"] == predicted_emotion]
 
     if not recs.empty:
-        
         recs = recs.sample(min(5, len(recs)), random_state=42)
         for _, row in recs.iterrows():
             try:
                 artist_list = ast.literal_eval(str(row.get("artists", "[]")))
-                if isinstance(artist_list, list):
-                    artists = ", ".join(map(str, artist_list))
-                else:
-                    artists = str(row.get("artists", "Unknown"))
+                artists = ", ".join(artist_list) if isinstance(artist_list, list) else str(row.get("artists", "Unknown"))
             except Exception:
                 artists = str(row.get("artists", "Unknown"))
-
-            name = str(row.get("name", "Untitled"))
-            st.write(f"- **{name}** by {artists}")
+            st.write(f"- **{row.get('name', 'Untitled')}** by {artists}")
     else:
         st.info(f"Sorry, no songs found for **{predicted_emotion}**.")
 else:
