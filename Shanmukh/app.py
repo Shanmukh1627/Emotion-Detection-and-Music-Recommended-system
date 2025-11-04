@@ -1,34 +1,32 @@
 
 import sys, subprocess
+
 def _pip(pkgs):
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", *pkgs])
     except Exception as e:
         print("⚠️ pip install failed:", e)
 
+
 _pip([
-    "streamlit==1.39.0",
     "tensorflow-cpu==2.15.0.post1",
     "pandas==2.2.2",
     "numpy==1.26.4",
     "pillow==10.3.0",
-    "gdown==5.2.0",
 ])
 
 
+try:
+    import gdown  
+except ModuleNotFoundError:
+    _pip(["gdown==5.2.0"])
+    import gdown  
+
+
 from pathlib import Path
-import os, gdown
+import os
 BASE_DIR = Path(__file__).resolve().parent
 os.chdir(BASE_DIR)
-
-
-MODEL_PATH = BASE_DIR / "emotion_model.keras"
-if not MODEL_PATH.exists():
-    gdown.download(
-        "https://drive.google.com/uc?id=17V1RvB_Wt7MbE7NHWXKzbJiXugIPNjDx",
-        str(MODEL_PATH),
-        quiet=False,
-    )
 
 
 import streamlit as st
@@ -39,31 +37,67 @@ from tensorflow.keras.preprocessing.image import img_to_array
 from PIL import Image
 import ast
 
+
+
+MODEL_PATH = BASE_DIR / "emotion_model.keras"
 MUSIC_DB_PATH = BASE_DIR / "processed_music.csv"
 EMOTION_LABELS = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
 
-@st.cache_resource
-def load_emotion_model():
-    model = tf.keras.models.load_model(str(MODEL_PATH))
-    return model
 
-@st.cache_data
-def load_music_database():
-    df = pd.read_csv(MUSIC_DB_PATH)
-    return df
+GDRIVE_URL = "https://drive.google.com/uc?id=17V1RvB_Wt7MbE7NHWXKzbJiXugIPNjDx"
 
-emotion_model = load_emotion_model()
-music_df = load_music_database()
+
+if not MODEL_PATH.exists():
+    try:
+        with open(BASE_DIR / ".download_lock", "w") as _:
+            pass  
+        st.write("🔽 Downloading model from Google Drive…")
+        gdown.download(GDRIVE_URL, str(MODEL_PATH), quiet=False)
+    except Exception as e:
+        st.error("Couldn't download the model from Google Drive. "
+                 "Ensure the file is shared as 'Anyone with the link → Viewer'.")
+        st.stop()
+    finally:
+        try:
+            os.remove(BASE_DIR / ".download_lock")
+        except Exception:
+            pass
+
 
 st.set_page_config(page_title="AI MoodMate 🎵", page_icon="🎵", layout="centered")
-st.title("AI MoodMate 🎵")
-st.write("Upload an image of a face and I'll recommend some music to match your mood.")
+st.title("🎧 AI MoodMate – Emotion Detection + Music Recommendations")
+st.write("Upload a face image **or** use your **webcam**. I’ll detect the mood and suggest matching songs.")
 
+
+@st.cache_resource
+def load_emotion_model():
+    try:
+        model = tf.keras.models.load_model(str(MODEL_PATH))
+        return model
+    except Exception as e:
+        st.error(f"Failed to load model from {MODEL_PATH.name}: {e}")
+        st.stop()
+
+@st.cache_data
+def load_music_database(csv_path: Path):
+    if not csv_path.exists():
+        st.error(f"CSV not found: {csv_path.name}. Make sure it is inside your folder.")
+        st.stop()
+    try:
+        return pd.read_csv(csv_path)
+    except Exception as e:
+        st.error(f"Failed to read {csv_path.name}: {e}")
+        st.stop()
+
+emotion_model = load_emotion_model()
+music_df = load_music_database(MUSIC_DB_PATH)
+
+# ---------- Input selection (Upload or Webcam) ----------
 input_option = st.radio("Choose your input method:", ("Upload a file", "Use Webcam"))
 image_to_process = None
 
 if input_option == "Upload a file":
-    uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png", "jpeg"])
+    uploaded_file = st.file_uploader("Choose an image…", type=["jpg", "png", "jpeg"])
     if uploaded_file is not None:
         image_to_process = Image.open(uploaded_file)
 else:
@@ -71,33 +105,45 @@ else:
     if webcam_image is not None:
         image_to_process = Image.open(webcam_image)
 
-if image_to_process is not None:
-    st.image(image_to_process, caption='Your Image', use_container_width=True)
 
+if image_to_process is not None:
+    st.image(image_to_process, caption="Your Image", use_container_width=True)
+
+    
     img_resized = image_to_process.resize((96, 96))
-    if img_resized.mode != 'RGB':
-        img_resized = img_resized.convert('RGB')
+    if img_resized.mode != "RGB":
+        img_resized = img_resized.convert("RGB")
 
     img_array = img_to_array(img_resized)
-    img_array = np.expand_dims(img_array, axis=0)
-    img_array /= 255.0
+    img_array = np.expand_dims(img_array, axis=0).astype("float32") / 255.0
 
-    with st.spinner('Detecting your mood...'):
-        predictions = emotion_model.predict(img_array)
-        predicted_class_index = np.argmax(predictions[0])
+    with st.spinner("🧠 Detecting your mood…"):
+        preds = emotion_model.predict(img_array)
+        predicted_class_index = int(np.argmax(preds[0]))
         predicted_emotion = EMOTION_LABELS[predicted_class_index]
 
     st.success(f"I think you're feeling: **{predicted_emotion.capitalize()}**")
 
-    st.subheader(f"Here are some '{predicted_emotion.capitalize()}' songs for you:")
-    recommended_songs = music_df[music_df['emotion'] == predicted_emotion]
+   
+    st.subheader(f"🎵 Songs for a **{predicted_emotion.capitalize()}** mood")
+    recs = music_df[music_df["emotion"] == predicted_emotion]
 
-    if not recommended_songs.empty:
-        for _, row in recommended_songs.sample(min(5, len(recommended_songs))).iterrows():
+    if not recs.empty:
+        
+        recs = recs.sample(min(5, len(recs)), random_state=42)
+        for _, row in recs.iterrows():
             try:
-                artist_list = ast.literal_eval(row['artists'])
-                st.write(f"- **{row['name']}** by {', '.join(artist_list)}")
+                artist_list = ast.literal_eval(str(row.get("artists", "[]")))
+                if isinstance(artist_list, list):
+                    artists = ", ".join(map(str, artist_list))
+                else:
+                    artists = str(row.get("artists", "Unknown"))
             except Exception:
-                st.write(f"- **{row['name']}** by {row['artists']}")
+                artists = str(row.get("artists", "Unknown"))
+
+            name = str(row.get("name", "Untitled"))
+            st.write(f"- **{name}** by {artists}")
     else:
-        st.write(f"Sorry, I couldn't find any songs for '{predicted_emotion}'.")
+        st.info(f"Sorry, no songs found for **{predicted_emotion}**.")
+else:
+    st.info("⬆️ Upload an image or switch to **Use Webcam** to get started.")
