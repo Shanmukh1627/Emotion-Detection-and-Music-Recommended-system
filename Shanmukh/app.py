@@ -91,7 +91,7 @@ with tab1:
         image_to_process = Image.open(uploaded_file)
 with tab2:
     webcam_image = st.camera_input("Take a picture!")
-    if webcam_image is not None:
+if webcam_image is not None:
     image_to_process = Image.open(webcam_image)
     image_to_process = image_to_process.transpose(Image.FLIP_LEFT_RIGHT)  
 
